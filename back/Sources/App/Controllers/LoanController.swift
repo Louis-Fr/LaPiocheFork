@@ -4,7 +4,15 @@ import Vapor
 struct LoanController: RouteCollection {
     func boot(routes: any RoutesBuilder) throws {
         let loans = routes.grouped("loans")
+        loans.get(use: index)
         loans.post(use: create)
+    }
+    
+    @Sendable
+    func index(req: Request) async throws -> [LoanDTO] {
+        let loans = try await Loan.query(on: req.db)
+            .all()
+        return loans.map { $0.toDTO() }
     }
 
     @Sendable
