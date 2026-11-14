@@ -161,4 +161,35 @@ final class LoanTests: XCTestCase {
             )
         }
     }
+
+    func testBorrowingSameGameTwiceBySameMmeberReturnsConflict() async throws {
+        try await withApp { app in
+            let game = try await createGame(app)
+            let gameId = try XCTUnwrap(game.id)
+            let member = try await createMember(app)
+            let memberId = try XCTUnwrap(member.id)
+
+            try await borrow(app, gameID: gameId, memberID: memberId) { res in
+                XCTAssertEqual(res.status, .created)
+            }
+
+            try await borrow(app, gameID: gameId, memberID: memberId) { res in
+                XCTAssertEqual(res.status, .conflict)
+            }
+
+            try await app.test(
+                .GET,
+                "loans",
+                afterResponse: { res async throws in
+                    XCTAssertEqual(
+                        try res.content.decode([LoanDTO].self).count,
+                        1
+                    )
+
+                }
+            )
+
+        }
+    }
+
 }
