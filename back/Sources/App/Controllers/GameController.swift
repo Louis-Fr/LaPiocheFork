@@ -13,10 +13,31 @@ struct GameController: RouteCollection {
 
     @Sendable
     func index(req: Request) async throws -> [GameDTO] {
-        let games = try await Game.query(on: req.db)
+        let query = Game.query(on: req.db)
             .with(\.$loans)
-            .all()
-        return games.map { $0.toDTO() }
+
+        if let q = req.query[String.self, at: "q"], !q.isEmpty {
+            query.filter(\.$title ~~ q)
+        }
+
+        if let players = try positiveInt(req, "players") {
+            query.filter(\.$minPlayers <= players)
+            query.filter(\.$maxPlayers >= players)
+        }
+
+        if let maxDuration = try positiveInt(req, "maxDuration") {
+            query.filter(\.$durationMinutes <= maxDuration)
+        }
+
+        return try await query.all().map { $0.toDTO() }
+    }
+
+    private func positiveInt(_ req: Request, _ name: String) throws -> Int? {
+        guard let raw = req.query[String.self, at: name] else { return nil }
+        guard let value = Int(raw), value > 0 else {
+            throw Abort(.badRequest, reason: "\(name) must a positive integer")
+        }
+        return value
     }
 
     @Sendable
@@ -39,10 +60,11 @@ struct GameController: RouteCollection {
         guard let gameID = req.parameters.get("gameID", as: UUID.self) else {
             throw Abort(.badRequest, reason: "Invalid game id")
         }
-        guard let game = try await Game.query(on: req.db)
-            .filter(\.$id == gameID)
-            .with(\.$loans)
-            .first()
+        guard
+            let game = try await Game.query(on: req.db)
+                .filter(\.$id == gameID)
+                .with(\.$loans)
+                .first()
         else {
             throw Abort(.notFound, reason: "Game not found")
         }
@@ -52,11 +74,11 @@ struct GameController: RouteCollection {
     @Sendable
     func modify(req: Request) async throws -> GameDTO {
         let game = try await findGame(req)
-        
+
         try CreateGameDTO.validate(content: req)
         let dto = try req.content.decode(CreateGameDTO.self)
         try dto.ensureConsistentPlayerCount()
-        
+
         game.title = dto.title
         game.minPlayers = dto.minPlayers
         game.maxPlayers = dto.maxPlayers
@@ -65,13 +87,16 @@ struct GameController: RouteCollection {
         try await game.update(on: req.db)
         return game.toDTO()
     }
-    
+
     @Sendable
     func delete(req: Request) async throws -> HTTPResponseStatus {
         let game = try await findGame(req)
 
         guard game.loans.isEmpty else {
-            throw Abort(.conflict, reason: "Game has loans and cannot be deleted")
+            throw Abort(
+                .conflict,
+                reason: "Game has loans and cannot be deleted"
+            )
         }
 
         try await game.delete(on: req.db)
